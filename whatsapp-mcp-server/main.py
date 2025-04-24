@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from mcp.server.fastmcp import FastMCP
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
@@ -12,7 +12,9 @@ from whatsapp import (
     send_message as whatsapp_send_message,
     send_file as whatsapp_send_file,
     send_audio_message as whatsapp_audio_voice_message,
-    download_media as whatsapp_download_media
+    download_media as whatsapp_download_media,
+    list_group_members as whatsapp_list_group_members,
+    add_group_members as whatsapp_add_group_members
 )
 
 # Initialize FastMCP server
@@ -244,6 +246,48 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
         return {
             "success": False,
             "message": "Failed to download media"
+        }
+
+@mcp.tool()
+def list_group_members(group_jid: str) -> Dict[str, Any]:
+    """List all members (JIDs) of a specific WhatsApp group.
+
+    Args:
+        group_jid: The JID of the group (e.g., "123456789-12345678@g.us")
+
+    Returns:
+        A dictionary containing success status, list of member JIDs, and a status message.
+    """
+    success, members, message = whatsapp_list_group_members(group_jid)
+    return {
+        "success": success,
+        "members": members,
+        "message": message
+    }
+
+@mcp.tool()
+def add_group_members(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+    """Add members to a specific WhatsApp group.
+
+    Args:
+        group_jid: The JID of the group (e.g., "123456789-12345678@g.us")
+        participants: A list of participant JIDs to add (e.g., ["111111111@s.whatsapp.net", "222222222@s.whatsapp.net"])
+
+    Returns:
+        A dictionary containing success status and a status message.
+    """
+    # Basic validation for participant format (JID)
+    invalid_participants = [p for p in participants if '@' not in p or '.' not in p]
+    if invalid_participants:
+        return {
+            "success": False,
+            "message": f"Invalid participant JIDs format: {', '.join(invalid_participants)}"
+        }
+        
+    success, message = whatsapp_add_group_members(group_jid, participants)
+    return {
+        "success": success,
+        "message": message
         }
 
 if __name__ == "__main__":

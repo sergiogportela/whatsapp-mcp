@@ -765,3 +765,68 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+def list_group_members(group_jid: str) -> Tuple[bool, Optional[List[str]], str]:
+    """List members of a specific WhatsApp group by calling the Go bridge API.
+
+    Args:
+        group_jid: The JID of the group (e.g., "123456789-12345678@g.us")
+
+    Returns:
+        A tuple containing: (success: bool, members: Optional[List[str]], message: str)
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/group/members"
+        payload = {"group_jid": group_jid}
+        
+        response = requests.post(url, json=payload)
+        
+        if response.status_code == 200:
+            result = response.json()
+            success = result.get("success", False)
+            members = result.get("members") # Can be None if success is false
+            message = result.get("message", "Unknown response")
+            return success, members, message
+        else:
+            return False, None, f"Error: HTTP {response.status_code} - {response.text}"
+
+    except requests.RequestException as e:
+        return False, None, f"Request error: {str(e)}"
+    except json.JSONDecodeError:
+        return False, None, f"Error parsing response: {response.text}"
+    except Exception as e:
+        return False, None, f"Unexpected error: {str(e)}"
+
+def add_group_members(group_jid: str, participants: List[str]) -> Tuple[bool, str]:
+    """Add members to a specific WhatsApp group by calling the Go bridge API.
+
+    Args:
+        group_jid: The JID of the group (e.g., "123456789-12345678@g.us")
+        participants: A list of participant JIDs to add (e.g., ["111111111@s.whatsapp.net"])
+
+    Returns:
+        A tuple containing: (success: bool, message: str)
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/group/add_members"
+        payload = {
+            "group_jid": group_jid,
+            "participants": participants
+        }
+        
+        response = requests.post(url, json=payload)
+        
+        if response.status_code == 200:
+            result = response.json()
+            success = result.get("success", False)
+            message = result.get("message", "Unknown response")
+            return success, message
+        else:
+            return False, f"Error: HTTP {response.status_code} - {response.text}"
+
+    except requests.RequestException as e:
+        return False, f"Request error: {str(e)}"
+    except json.JSONDecodeError:
+        return False, f"Error parsing response: {response.text}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"

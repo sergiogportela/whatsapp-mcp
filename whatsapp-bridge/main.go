@@ -202,6 +202,44 @@ type SendMessageRequest struct {
 	MediaPath string `json:"media_path,omitempty"`
 }
 
+// DownloadMediaRequest represents the request body for the download media API
+type DownloadMediaRequest struct {
+	MessageID string `json:"message_id"`
+	ChatJID   string `json:"chat_jid"`
+}
+
+// DownloadMediaResponse represents the response for the download media API
+type DownloadMediaResponse struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Filename string `json:"filename,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+// GetGroupMembersRequest represents the request body for getting group members
+type GetGroupMembersRequest struct {
+	GroupJID string `json:"group_jid"`
+}
+
+// GetGroupMembersResponse represents the response for getting group members
+type GetGroupMembersResponse struct {
+	Success bool     `json:"success"`
+	Members []string `json:"members,omitempty"`
+	Message string   `json:"message"`
+}
+
+// AddGroupMembersRequest represents the request body for adding group members
+type AddGroupMembersRequest struct {
+	GroupJID     string   `json:"group_jid"`
+	Participants []string `json:"participants"`
+}
+
+// AddGroupMembersResponse represents the response for adding group members
+type AddGroupMembersResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // Function to send a WhatsApp message
 func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
 	if !client.IsConnected() {
@@ -468,20 +506,6 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, content)
 		}
 	}
-}
-
-// DownloadMediaRequest represents the request body for the download media API
-type DownloadMediaRequest struct {
-	MessageID string `json:"message_id"`
-	ChatJID   string `json:"chat_jid"`
-}
-
-// DownloadMediaResponse represents the response for the download media API
-type DownloadMediaResponse struct {
-	Success  bool   `json:"success"`
-	Message  string `json:"message"`
-	Filename string `json:"filename,omitempty"`
-	Path     string `json:"path,omitempty"`
 }
 
 // Store additional media info in the database
@@ -771,6 +795,85 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			Message:  fmt.Sprintf("Successfully downloaded %s media", mediaType),
 			Filename: filename,
 			Path:     path,
+		})
+	})
+
+	// Handler for getting group members
+	http.HandleFunc("/api/group/members", func(w http.ResponseWriter, r *http.Request) {
+		// Only allow POST requests (to easily pass JID in body)
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse the request body
+		var req GetGroupMembersRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		// Validate request
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+
+		// Get group members
+		success, members, message := getGroupMembers(client, req.GroupJID)
+
+		// Set response headers
+		w.Header().Set("Content-Type", "application/json")
+
+		// Set appropriate status code
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		// Send response
+		json.NewEncoder(w).Encode(GetGroupMembersResponse{
+			Success: success,
+			Members: members,
+			Message: message,
+		})
+	})
+
+	// Handler for adding group members
+	http.HandleFunc("/api/group/add_members", func(w http.ResponseWriter, r *http.Request) {
+		// Only allow POST requests
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse the request body
+		var req AddGroupMembersRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		// Validate request
+		if req.GroupJID == "" || len(req.Participants) == 0 {
+			http.Error(w, "Group JID and at least one participant are required", http.StatusBadRequest)
+			return
+		}
+
+		// Add group members
+		success, message := addGroupMembers(client, req.GroupJID, req.Participants)
+
+		// Set response headers
+		w.Header().Set("Content-Type", "application/json")
+
+		// Set appropriate status code
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		// Send response
+		json.NewEncoder(w).Encode(AddGroupMembersResponse{
+			Success: success,
+			Message: message,
 		})
 	})
 
@@ -1345,4 +1448,76 @@ func placeholderWaveform(duration uint32) []byte {
 	}
 
 	return waveform
+}
+
+// Function to get group members
+func getGroupMembers(client *whatsmeow.Client, groupJIDStr string) (bool, []string, string) {
+	if !client.IsConnected() {
+		return false, nil, "Not connected to WhatsApp"
+	}
+
+	// Parse group JID
+	groupJID, err := types.ParseJID(groupJIDStr)
+	if err != nil || groupJID.Server != "g.us" {
+		return false, nil, fmt.Sprintf("Invalid group JID: %s", groupJIDStr)
+	}
+
+	// Get group info
+	groupInfo, err := client.GetGroupInfo(groupJID)
+	if err != nil {
+		return false, nil, fmt.Sprintf("Failed to get group info for %s: %v", groupJIDStr, err)
+	}
+
+	if groupInfo == nil || groupInfo.Participants == nil {
+		return false, nil, fmt.Sprintf("No participant info found for group %s", groupJIDStr)
+	}
+
+	// Extract participant JIDs
+	var members []string
+	for _, p := range groupInfo.Participants {
+		members = append(members, p.JID.String())
+	}
+
+	return true, members, fmt.Sprintf("Successfully retrieved %d members for group %s", len(members), groupInfo.Name)
+}
+
+// Function to add members to a group
+func addGroupMembers(client *whatsmeow.Client, groupJIDStr string, participantsToAddStr []string) (bool, string) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp"
+	}
+
+	// Parse group JID
+	groupJID, err := types.ParseJID(groupJIDStr)
+	if err != nil || groupJID.Server != "g.us" {
+		return false, fmt.Sprintf("Invalid group JID: %s", groupJIDStr)
+	}
+
+	// Parse participant JIDs
+	var participantJIDs []types.JID
+	var failedParses []string
+	for _, pStr := range participantsToAddStr {
+		jid, err := types.ParseJID(pStr)
+		if err != nil || jid.Server != "s.whatsapp.net" { // Assuming only individual contacts can be added
+			failedParses = append(failedParses, pStr)
+			continue
+		}
+		participantJIDs = append(participantJIDs, jid)
+	}
+
+	if len(failedParses) > 0 {
+		return false, fmt.Sprintf("Invalid participant JIDs: %s", strings.Join(failedParses, ", "))
+	}
+
+	if len(participantJIDs) == 0 {
+		return false, "No valid participants provided to add."
+	}
+
+	// Add participants
+	_, err = client.UpdateGroupParticipants(groupJID, participantJIDs, "add")
+	if err != nil {
+		return false, fmt.Sprintf("Failed to add members to group %s: %v", groupJIDStr, err)
+	}
+
+	return true, fmt.Sprintf("Successfully requested to add %d members to group %s", len(participantJIDs), groupJIDStr)
 }
